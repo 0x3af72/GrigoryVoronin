@@ -12,6 +12,8 @@ import chess
 import time
 import random
 
+PROMOTE_CHARS = "qrbn"
+
 class Game:
 
     def __init__(self, my_turn, driver_analysis, game_options):
@@ -20,7 +22,7 @@ class Game:
         self.driver_analysis = driver_analysis
         self.game_options = game_options
 
-    def get_move(self):
+    def get_move(self, lichess_wait):
 
         # wrong turn? dont want to confuse anything
         if not self.board.turn == self.my_turn:
@@ -29,7 +31,8 @@ class Game:
         # get top lines from lichess
         print(f"CURRENT FEN: {self.board.fen()}")
         self.driver_analysis.get(f"https://lichess.org/analysis/standard/{self.board.fen()}")
-        time.sleep(self.game_options["wait_eval_duration"])
+        print(lichess_wait)
+        time.sleep(lichess_wait)
         passed = False
         while not passed: # stale element cuz it keeps changing
             try:
@@ -62,17 +65,20 @@ class Game:
                     if "x" in self.board.san(chess.Move.from_uci(m)):
                         print("must do:", m)
                         move = m
+                        break
                 
                 # otherwise take random
                 if not move:
                     move = random.choice(available_moves)
             else:
                 move = moves[0]
+                print("forced")
             print(move)
             print(f"CURRENT EVAL: {evals[moves.index(move)]}")
 
         # return chosen move
-        return self.san_to_uci(move)
+        promote_to = [c for c in PROMOTE_CHARS if move[-1] == c]
+        return self.san_to_uci(move), bool(promote_to), promote_to
     
     def san_to_uci(self, move_san):
         return self.board.parse_san(move_san).uci()
