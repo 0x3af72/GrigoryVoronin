@@ -49,11 +49,13 @@ class Game:
         lines = {}
         while not passed: # handle stale element cuz it keeps changing
             try:
+                driver.implicitly_wait(0)
                 moves = [self.store_line(lines, elem) for elem in self.driver_analysis.find_elements(By.XPATH, "//span[@data-move-index='0']")]
                 if len(moves) >= 1:
                     passed = True
             except StaleElementReferenceException as e:
                 print(f"STALE ELEMENT: {e}")
+        driver.implicitly_wait(2)
 
         # get evals
         evals = []

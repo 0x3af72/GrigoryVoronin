@@ -108,8 +108,8 @@ def setup():
 def start_game(driver, driver_analysis, time_control="3 min"):
 
     # get chess.com page
-    driver.implicitly_wait(2)
     driver.get("https://chess.com/play/online")
+    driver.implicitly_wait(2)
 
     # read game options
     with open("data/options.json", "r") as r:
