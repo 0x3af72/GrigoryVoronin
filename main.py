@@ -9,12 +9,16 @@ from selenium.webdriver.support import expected_conditions as EC
 
 import json
 import time
+import random
 
 import game
 
 # paths
 EXECUTABLE_PATH = "drivers/chromedriver.exe"
 BRAVE_PATH = "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe" # have to install brave for this to work
+
+# promotion characters
+PROMOTE_CHARS = "qrbn"
 
 # load cookies from file
 def load_cookies(file):
@@ -101,7 +105,7 @@ def setup():
 
     return driver, driver_analysis
 
-def start_game(driver, driver_analysis, time_control="10 min"):
+def start_game(driver, driver_analysis, time_control="3 min"):
 
     # get chess.com page
     driver.implicitly_wait(2)
@@ -138,6 +142,8 @@ def start_game(driver, driver_analysis, time_control="10 min"):
     # create game object
     game_obj = game.Game(my_turn, driver_analysis, game_options)
     lichess_wait = None # wait time for lichess analysis. longer wait means more accuracy
+    last_eval = 0 # last computer evaluation
+    current_line = [] # current line that the bot is following so it can premove
 
     # game loop
     while True:
@@ -175,8 +181,18 @@ def start_game(driver, driver_analysis, time_control="10 min"):
                 game_obj.push_san(last_move)
             
             # get move to play
-            to_play, has_promote, promote_to = game_obj.get_move(lichess_wait)
+            print(last_move, current_line)
+            if current_line and current_line[0] == last_move:
+                current_line.remove(current_line[0])
+                to_play = game_obj.san_to_uci(current_line[0])
+                current_line.remove(current_line[0])
+            else:
+                to_play, current_line = game_obj.get_move(lichess_wait)
             game_obj.push_move(to_play)
+
+            # check if there is promotion
+            promote_to = [c for c in PROMOTE_CHARS if to_play[-1] == c]
+            has_promote = bool(promote_to)
 
             # play the move - click the first square
             move_from, move_to = to_play[:2], to_play[2:]
@@ -212,8 +228,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(e)
 
-# possible to move faster
-# time to wait for lichess is dependent on time control??? try seconds / 300
+# possible to move faster - depends on internet connection
 # 3. randomize move times -> based on accuracy and premove lines?
 # 4. able to play with friends
 # auto resign when bad eval

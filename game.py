@@ -12,8 +12,6 @@ import chess
 import time
 import random
 
-PROMOTE_CHARS = "qrbn"
-
 class Game:
 
     def __init__(self, my_turn, driver_analysis, game_options):
@@ -21,6 +19,20 @@ class Game:
         self.my_turn = my_turn
         self.driver_analysis = driver_analysis
         self.game_options = game_options
+
+    def store_line(self, lines, elem):
+
+        # get move text
+        move = elem.get_attribute("data-board").split("|")[1]
+
+        # get and store the entire line (parent)
+        lines[move] = []
+        line_elem = elem.find_element(By.XPATH, "..")
+        for i in range(0, 6): # 6 means 3 moves ahead
+            lines[move].append(line_elem.find_element(By.XPATH, f"//span[@data-move-index='{i + 1}']").text)
+
+        # return
+        return move
 
     def get_move(self, lichess_wait):
 
@@ -34,27 +46,32 @@ class Game:
         print(lichess_wait)
         time.sleep(lichess_wait)
         passed = False
-        while not passed: # stale element cuz it keeps changing
+        lines = {}
+        while not passed: # handle stale element cuz it keeps changing
             try:
-                moves = [elem.get_attribute("data-board").split("|")[1] for elem in self.driver_analysis.find_elements(By.XPATH, "//span[@data-move-index='0']")]
+                moves = [self.store_line(lines, elem) for elem in self.driver_analysis.find_elements(By.XPATH, "//span[@data-move-index='0']")]
                 if len(moves) >= 1:
                     passed = True
             except StaleElementReferenceException as e:
                 print(f"STALE ELEMENT: {e}")
-        print(self.game_options["all_best"])
+
+        # get evals
+        evals = []
+        while len(evals) < len(moves):
+            evals = [
+                float(ev.text.replace("#", "")) * (-1 if not self.my_turn else 1) * (1000 if "#" in ev.text else 1)
+                for ev in self.driver_analysis.find_elements(By.TAG_NAME, "strong")[:5]
+            ]
+
+        # find move to play
         if self.game_options["all_best"]:
             move = moves[0]
         else:
-            # get evals
-            evals = []
-            while len(evals) < len(moves):
-                evals = [ev.text for ev in self.driver_analysis.find_elements(By.TAG_NAME, "strong")][:5]
 
             # get available moves
             available_moves = [
                 m for idx, m in enumerate(moves)
-                if (float(evals[idx].replace("#", "")) * (-1 if not self.my_turn else 1) * (1000 if "#" in evals[idx] else 1))\
-                >= self.game_options["lowest_eval"]
+                if evals[idx] >= self.game_options["lowest_eval"]
             ]
 
             if available_moves:
@@ -77,8 +94,7 @@ class Game:
             print(f"CURRENT EVAL: {evals[moves.index(move)]}")
 
         # return chosen move
-        promote_to = [c for c in PROMOTE_CHARS if move[-1] == c]
-        return self.san_to_uci(move), bool(promote_to), promote_to
+        return self.san_to_uci(move), lines[move]
     
     def san_to_uci(self, move_san):
         return self.board.parse_san(move_san).uci()
