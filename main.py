@@ -25,6 +25,28 @@ def load_cookies(file):
     with open(file, "r") as r:
         return json.load(r)
     
+# function to get last move as text from element
+def move_text(elem):
+
+    # icon if exists
+    icon = ""
+    try:
+        driver.implicitly_wait(0) # dont wait at all because might not exist
+        icon = elem.find_element(By.TAG_NAME, "span").get_attribute("data-figurine")
+    except NoSuchElementException:
+        pass
+    driver.implicitly_wait(2) # revert back to normal
+
+    # get the full move
+    if icon == None: # in case of en passant
+        icon = ""
+    if not "=" in elem.text:
+        last_move = icon + elem.text
+    else:
+        last_move = elem.text + icon
+
+    return last_move
+    
 # get current turn and move history
 def turn_state(driver):
 
@@ -51,22 +73,7 @@ def turn_state(driver):
     if not last_move:
         last_move = None # no last move
     else:
-        # icon if exists
-        icon = ""
-        try:
-            driver.implicitly_wait(0) # dont wait at all because might not exist
-            icon = last_move.find_element(By.TAG_NAME, "span").get_attribute("data-figurine")
-        except NoSuchElementException:
-            pass
-        driver.implicitly_wait(2) # revert back to normal
-
-        # get the full move
-        if icon == None: # in case of en passant
-            icon = ""
-        if not "=" in last_move.text:
-            last_move = icon + last_move.text
-        else:
-            last_move = last_move.text + icon
+        last_move = move_text(last_move)
 
     return turn_state, last_move
 
@@ -105,45 +112,87 @@ def setup():
 
     return driver, driver_analysis
 
-def start_game(driver, driver_analysis, time_control="3 min"):
+def start_game(driver, driver_analysis, time_control="1 min", from_url=None):
 
-    # get chess.com page
-    driver.get("https://chess.com/play/online")
+    # reset implicit wait
     driver.implicitly_wait(2)
 
     # read game options
     with open("data/options.json", "r") as r:
         game_options = json.load(r)
 
-    # remove chess.com premium ad
-    try: 
-        driver.find_element(By.XPATH, "//div[@class='icon-font-chess x ui_outside-close-icon']").click()
-    except NoSuchElementException:
-        pass
+    if not from_url: # just start a new game
 
-    # start the game
-    driver.find_element(By.XPATH, "//button[@data-cy='new-game-time-selector-button']").click()
-    driver.find_element(By.XPATH, f"//button[contains(text(), '{time_control}')]").click()
-    driver.find_element(By.XPATH, "//button[@data-cy='new-game-index-play']").click()
+        # get chess.com page
+        driver.get("https://chess.com/play/online")
 
-    # fair play button
-    try:
-        driver.find_element(By.XPATH, "//button[contains(text(), 'I Agree')]").click()
-    except NoSuchElementException:
-        pass
+        # remove chess.com premium ad
+        try: 
+            driver.find_element(By.XPATH, "//div[@class='icon-font-chess x ui_outside-close-icon']").click()
+        except NoSuchElementException:
+            pass
 
+        # start the game
+        driver.find_element(By.XPATH, "//button[@data-cy='new-game-time-selector-button']").click()
+        driver.find_element(By.XPATH, f"//button[contains(text(), '{time_control}')]").click()
+        driver.find_element(By.XPATH, "//button[@data-cy='new-game-index-play']").click()
+
+        # fair play button
+        try:
+            driver.find_element(By.XPATH, "//button[contains(text(), 'I Agree')]").click()
+        except NoSuchElementException:
+            pass
+
+        # wait before checking if white or black
+        print("waiting for url change")
+        WebDriverWait(driver, 6000).until(lambda driver: "/play/online" not in driver.current_url) # dont read the element too fast
+        print("ok changed url")
+        time.sleep(0.2) # wait for refresh
+
+    else: # continue from url
+
+        # get the url
+        driver.get(from_url)
+
+        # wait for load
+        WebDriverWait(driver, 10000).until(EC.visibility_of_element_located((By.XPATH, "//button[@data-tab='liveGameMoves']")))
+
+        # load board
+        i = 1
+        moves = []
+        while True:
+            try:
+                move = move_text(driver.find_element(By.XPATH, f"//div[@data-ply={i} and contains(@class, 'node')]"))
+                if not move:
+                    break
+                moves.append(move)
+                i += 1
+            except NoSuchElementException:
+                break
+        print(moves)
+    
     # check if white or black
-    print("waiting for url change")
-    WebDriverWait(driver, 6000).until(lambda driver: "/play/online" not in driver.current_url) # dont read the element too fast
-    print("ok changed url")
-    time.sleep(0.2) # wait for refresh
     my_turn = "white" in driver.find_element(By.XPATH, "//div[contains(@class, 'clock-bottom')]").get_attribute("class")
 
     # create game object
     game_obj = game.Game(my_turn, driver_analysis, game_options)
     lichess_wait = None # wait time for lichess analysis. longer wait means more accuracy
-    last_eval = 0 # last computer evaluation
     current_line = [] # current line that the bot is following so it can premove
+    delay_max = None # set later, to make time taken for moves look more humanlike
+
+    # input moves
+    if from_url:
+
+        # check if currently my turn
+        # if my turn, last move will be added so dont add last move or error
+        # if not my turn, last move has to be added first
+        turn, _ = turn_state(driver)
+        if turn == my_turn and moves:
+            moves.pop()
+
+        # add moves
+        for move in moves:
+            game_obj.push_san(move)
 
     # game loop
     while True:
@@ -169,6 +218,10 @@ def start_game(driver, driver_analysis, time_control="3 min"):
         # lichess analysis wait time
         if not lichess_wait:
             lichess_wait = seconds_left / 300 + 0.2
+
+        # range for move delay
+        if not delay_max:
+            delay_max = int(seconds_left / 12 * 100)
         
         # get turn state
         turn, last_move = turn_state(driver)
@@ -178,21 +231,33 @@ def start_game(driver, driver_analysis, time_control="3 min"):
             
             # push last move
             if last_move:
+
                 game_obj.push_san(last_move)
             
             # get move to play
             print(last_move, current_line)
+            can_premove = False
             if current_line and current_line[0] == last_move:
-                current_line.remove(current_line[0])
-                to_play = game_obj.san_to_uci(current_line[0])
-                current_line.remove(current_line[0])
-            else:
+                current_line.pop(0)
+                try:
+                    to_play = game_obj.san_to_uci(current_line.pop(0))
+                    game_obj.push_move(to_play)
+                    can_premove = True
+                except game.chess.IllegalMoveError: # sometimes lichess gives random illegal moves?
+                    pass
+            if not can_premove:
                 to_play, current_line = game_obj.get_move(lichess_wait)
-            game_obj.push_move(to_play)
+                game_obj.push_move(to_play)
 
             # check if there is promotion
             promote_to = [c for c in PROMOTE_CHARS if to_play[-1] == c]
             has_promote = bool(promote_to)
+
+            # delay between moves
+            move_delay = min(random.randint(0, delay_max), random.randint(0, delay_max), random.randint(0, delay_max), random.randint(0, delay_max)) / 100
+            print("DELAY", move_delay, "MAX", delay_max)
+            if game_options["move_delay"]:
+                time.sleep(move_delay)
 
             # play the move - click the first square
             move_from, move_to = to_play[:2], to_play[2:]
@@ -221,14 +286,24 @@ def start_game(driver, driver_analysis, time_control="3 min"):
 
 if __name__ == "__main__":
     driver, driver_analysis = setup()
+
+    # while True:
+    #     try:
+    #         # input("START GAME...")
+    #         start_game(driver, driver_analysis)
+    #     except Exception as e:
+    #         print(e)
+    #         # raise e
+
     while True:
         try:
-            # input("START GAME...")
-            start_game(driver, driver_analysis)
+            from_url = input("ENTER URL")
+            start_game(driver, driver_analysis, from_url=from_url)
         except Exception as e:
             print(e)
 
-# possible to move faster - depends on internet connection
+# still too slow for bullet
 # 3. randomize move times -> based on accuracy and premove lines?
 # 4. able to play with friends
-# auto resign when bad eval
+# be able to lose
+# add config options todisable stuff like delay between moves

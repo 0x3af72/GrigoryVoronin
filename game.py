@@ -4,7 +4,7 @@ from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException
 from selenium.webdriver.support import expected_conditions as EC
 
 import chess
@@ -28,13 +28,23 @@ class Game:
         # get and store the entire line (parent)
         lines[move] = []
         line_elem = elem.find_element(By.XPATH, "..")
-        for i in range(0, 6): # 6 means 3 moves ahead
-            lines[move].append(line_elem.find_element(By.XPATH, f"//span[@data-move-index='{i + 1}']").text)
+        for i in range(0, 4): # get up to 6 moves ahead
+            try:
+                next_move = line_elem.find_element(By.XPATH, f"//span[@data-move-index='{i + 1}']")
+                if not next_move.text:
+                    break
+                lines[move].append(next_move.text)
+            except NoSuchElementException:
+                break
+        if len(lines[move]) % 2 == 1: lines[move].pop() # trim list if needed
 
         # return
         return move
 
     def get_move(self, lichess_wait):
+
+        # reset implicit wait just in case
+        self.driver_analysis.implicitly_wait(2)
 
         # wrong turn? dont want to confuse anything
         if not self.board.turn == self.my_turn:
@@ -49,13 +59,13 @@ class Game:
         lines = {}
         while not passed: # handle stale element cuz it keeps changing
             try:
-                driver.implicitly_wait(0)
+                self.driver_analysis.implicitly_wait(0)
                 moves = [self.store_line(lines, elem) for elem in self.driver_analysis.find_elements(By.XPATH, "//span[@data-move-index='0']")]
                 if len(moves) >= 1:
                     passed = True
             except StaleElementReferenceException as e:
-                print(f"STALE ELEMENT: {e}")
-        driver.implicitly_wait(2)
+                print(f"<STALE ELEMENT FROM LICHESS ANALYSIS SELENIUM>")
+        self.driver_analysis.implicitly_wait(2)
 
         # get evals
         evals = []
